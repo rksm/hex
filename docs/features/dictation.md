@@ -73,7 +73,8 @@ each platform's settings; files without it load as Hold. Checks:
 [windows_input.rs](../../src/windows_input.rs), and
 `toggle_mode_starts_on_a_tap_and_finishes_on_the_next` in
 [linux_input.rs](../../src/linux_input.rs), whose one state machine serves X11
-grabs, Wayland portal shortcuts, and the `hex dictation` commands alike. Only
+grabs, Wayland keyboards, Wayland portal shortcuts, and the `hex dictation`
+commands alike. Only
 the Windows build was compiled and tested locally (2026-10-19); macOS relies on
 CI. The Linux state machine and X11 grab tests ran on 2026-10-22 (the grabs on
 an isolated Xwayland display). No physical keyboard check yet.
@@ -129,7 +130,8 @@ Release or locked finishing press                     // dictate.release-tail
   -> Same for Voice Action and promotion; not Escape, short taps, voice
      controls, programmatic stop, or meetings
   -> Linux and Windows wait the same tail; Linux ends at the release it observes
-     (an X11 key release, a portal Deactivated, or `hex dictation stop`)
+     (an X11 key release, a /dev/input key release, a portal Deactivated, or
+     `hex dictation stop`)
   -> A press inside the tail starts after the old clip finishes, with its own pre-roll
 
 Release that will transcribe                          // dictate.stop-tone

@@ -221,6 +221,7 @@ establish equivalent audio onset.
 ```ts
 Settings > Voice Action > Enable                      // voice-action.linux; off by default
 ├── X11 -> Hold the saved shortcut (Ctrl+Alt+I by default) -> Release -> Run
+├── Wayland + readable /dev/input -> Hold the saved shortcut -> Release -> Run
 ├── Wayland + GlobalShortcuts portal -> Hold the granted trigger -> Release -> Run
 ├── Wayland without the portal -> Desktop keybinding runs
 │   `hex voice-action start` on press, `hex voice-action stop` on release,

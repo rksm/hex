@@ -722,8 +722,11 @@ Linux beta                               // not macOS feature parity
 │   └── CPU or a model that cannot stream -> Transcribe the whole clip after release
 ├── hex app -> Settings client; closing it leaves the runtime running
 ├── Recording sounds -> Shortcut press / capture stop / active cancellation
-├── Shortcuts -> One state machine, three sources        // linux.shortcuts
+├── Shortcuts -> One state machine, four sources         // linux.shortcuts
 │   ├── X11 -> Root-window key grabs; Settings records the chord
+│   ├── Wayland + readable /dev/input (input group) -> Read the keyboards
+│   │   ├── Key down with exactly its modifiers -> Press; key up -> Release
+│   │   └── Blocks nothing: the chord and Escape also reach the focused app
 │   ├── Wayland + GlobalShortcuts portal -> Desktop grants the triggers
 │   │   ├── Settings shows the granted trigger (GNOME/KDE may assign another)
 │   │   └── Refused shortcut -> "Not granted" + error; the rest keep working
@@ -735,6 +738,7 @@ Linux beta                               // not macOS feature parity
 │   └── Service missing or not listening -> Clear error, non-zero exit
 ├── Escape -> Cancel active capture, not newest accepted job
 │   ├── Bound only while recording (portal: own session, also with held modifiers)
+│   ├── Keyboards read from /dev/input -> Watched while recording, not blocked
 │   └── X11 grab conflict / portal refusal -> Warn without stopping dictation
 ├── Voice Action (opt-in) -> Hold its shortcut or `hex voice-action` -> Instruction
 │   └── Selected text from the primary selection -> OpenCode -> Paste the reply
@@ -742,6 +746,11 @@ Linux beta                               // not macOS feature parity
 ├── Microphone failure -> Listener exits, not macOS automatic recovery
 │   └── Overload (Xrun) glitch -> Logged; not a failure
 └── Paste -> Retain transcript clipboard, not restore previous contents
+    ├── Focused process (X11 window, GNOME FocusBridge extension) -> Route
+    │   ├── Emacs -> emacsclient inserts at point; failure -> error, text on clipboard
+    │   ├── Terminal (wezterm, kitty, ...) -> Ctrl-Shift-V
+    │   └── Other or unknown -> Ctrl-V, or Ctrl-Shift-V with Terminal paste
+    └── Wayland keys -> uinput keyboard after held modifiers lift, else wtype
 ```
 
 ```ts
@@ -762,10 +771,11 @@ lints, and tests x64 and builds and tests ARM64 on every pull request. Physical
 smoke tests on Windows 10 and on ARM64 hardware have not been run.
 
 No Linux voice Commands or meetings. `hex listen` instead prints Moonshine
-transcripts. Wayland shortcuts need either the desktop's GlobalShortcuts portal
-or the user's own keybindings for the `hex` commands; Hex reads no input
-devices. Click-through and a physical portal or keybinding press still need
-native evidence. Its [smoke](../../scripts/test-wayland-paste.sh) explicitly
+transcripts. Wayland shortcuts come from the keyboards when the service can
+read /dev/input, otherwise from the desktop's GlobalShortcuts portal or the
+user's own keybindings for the `hex` commands. GNOME 50's portal refuses the
+`hex` app id, so GNOME needs the keyboard path. Click-through and a physical
+portal or keybinding press still need native evidence. Its [smoke](../../scripts/test-wayland-paste.sh) explicitly
 isolates `HEX_APPLICATION_SUPPORT_DIR`, pastes while another keyboard holds
 Ctrl and Alt, and checks that Settings can exit without stopping the service.
 
@@ -780,6 +790,16 @@ On 2026-10-22 the portal path was observed on niri with xdg-desktop-portal-gnome
 using synthetic uinput keys against an isolated service: granted triggers,
 hold and Escape while held, double-tap lock, Paste Last, and commands. A
 physical keyboard press has not been recorded.
+
+On 2026-10-22 on GNOME 50 Wayland: the uinput paste put a transcript with CJK
+text and a newline into a GTK window (`native_wayland_clipboard_shortcut`, run
+by hand). A throwaway uinput device showed that the keyboard reader sees a
+right-Ctrl press and release with the modifier stamped on the press. An earlier
+build with the keyboard reader started dictation from a physical Alt+Super+M.
+The Emacs route, Ctrl-Shift-V into WezTerm, and the current build's physical
+shortcut have not been recorded. `key_code` and the paste routes have unit tests
+in [linux_evdev.rs](../../src/linux_evdev.rs) and
+[linux_paste.rs](../../src/linux_paste.rs).
 
 See the [Linux guide](../linux.md), [linux_app.rs](../../src/linux_app.rs),
 [linux_portal.rs](../../src/linux_portal.rs), and

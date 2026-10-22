@@ -1,6 +1,7 @@
 //! Linux dictation shortcuts: the one state machine every input feeds, the
-//! X11 key grabs, the Wayland shortcuts portal, and the `hex` commands a
-//! desktop keybinding runs. Dictation sees only [`HotkeyEvent`]s.
+//! X11 key grabs, the Wayland keyboards in /dev/input or shortcuts portal,
+//! and the `hex` commands a desktop keybinding runs. Dictation sees only
+//! [`HotkeyEvent`]s.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -647,6 +648,12 @@ impl Backend {
         binding: LinuxHotkey,
         options: HotkeyOptions,
     ) -> Result<()> {
+        // GNOME's shortcuts portal refuses Hex's app id and reports a release
+        // only while every modifier is still down, so readable keyboards win.
+        let keyboards = crate::linux_evdev::Keyboards::open();
+        if !keyboards.is_empty() {
+            return self.run_evdev(keyboards, dispatcher, binding, options);
+        }
         match crate::linux_portal::Portal::connect(&self.stop)? {
             Some(portal) => self.run_portal(portal, dispatcher, binding, options),
             None => {
@@ -654,6 +661,74 @@ impl Backend {
                 self.run_commands(dispatcher)
             }
         }
+    }
+
+    /// Shortcuts read from the keyboards in /dev/input. A shortcut matches
+    /// when its key goes down while exactly its modifiers are held, and ends
+    /// when that key comes up.
+    fn run_evdev(
+        self,
+        mut keyboards: crate::linux_evdev::Keyboards,
+        mut dispatcher: Dispatcher,
+        binding: LinuxHotkey,
+        options: HotkeyOptions,
+    ) -> Result<()> {
+        let requested = [
+            Some((Shortcut::Dictation, binding)),
+            options.paste_last.map(|key| (Shortcut::PasteLast, key)),
+            options.voice_action.map(|key| (Shortcut::VoiceAction, key)),
+        ];
+        let mut shortcuts = Vec::new();
+        for (shortcut, key) in requested.into_iter().flatten() {
+            let code = crate::linux_evdev::key_code(&keysym_name(&key.key)?)
+                .ok_or_else(|| eyre!("unsupported shortcut key: {}", key.key))?;
+            let modifiers = crate::linux_evdev::Modifiers {
+                control: key.control,
+                alt: key.alt,
+                shift: key.shift,
+                super_key: key.super_key,
+            };
+            shortcuts.push((shortcut, code, modifiers));
+        }
+        self.mark_ready(DesktopShortcuts::Registered);
+        let mut held = [false; 3];
+        while !self.stopping() {
+            let (events, lost) = keyboards.read();
+            if lost && held.contains(&true) {
+                held = [false; 3];
+                dispatcher.input(Input::Lost);
+            }
+            for event in events {
+                if event.pressed
+                    && event.code == crate::linux_evdev::KEY_ESC
+                    && dispatcher.state.wants_escape()
+                {
+                    dispatcher.input(Input::Escape);
+                    continue;
+                }
+                for &(shortcut, code, modifiers) in &shortcuts {
+                    let down = &mut held[shortcut.index()];
+                    if code != event.code || event.pressed == *down {
+                        continue;
+                    }
+                    if event.pressed && event.modifiers != modifiers {
+                        continue;
+                    }
+                    *down = event.pressed;
+                    dispatcher.input(if event.pressed {
+                        Input::Pressed(shortcut)
+                    } else {
+                        Input::Released(shortcut)
+                    });
+                }
+            }
+            dispatcher.commands();
+            if !dispatcher.flush()? {
+                return Ok(());
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+        Ok(())
     }
 
     /// Only `hex` commands bound in the desktop drive dictation.

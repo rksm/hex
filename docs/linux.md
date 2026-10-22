@@ -9,11 +9,11 @@ or a software Vulkan driver. See the Wayland requirements below.
 
 Linux opens the same window as macOS and Windows: Settings, Modes, Voice Action,
 and History. Voice commands, website mode rules, and meetings are macOS-only.
-This is not universal Wayland support: GNOME and KDE are not covered by the
-current clipboard, virtual-keyboard, and overlay protocol contract. Shortcuts
-are general: the desktop's GlobalShortcuts portal when it has one, otherwise
-your desktop's own keybindings running `hex` commands (see
-[Shortcuts](#shortcuts)).
+This is not universal Wayland support. GNOME works when Hex can read your
+keyboards and write to `/dev/uinput` (see [GNOME](#gnome)), but it shows no
+recording overlay. Shortcuts come from your keyboards, the desktop's
+GlobalShortcuts portal, or your desktop's own keybindings running `hex`
+commands (see [Shortcuts](#shortcuts)).
 
 For Nix/NixOS, use the [Nix guide](nix.md). Nix owns updates to that installation;
 HEX's signed updater owns only the direct-install layout below.
@@ -153,8 +153,10 @@ running state after the edit.
 Modes apply corrections, OpenCode rewriting, and transformations per
 application. On X11, HEX reads the frontmost application from the active
 window's process name (`code`, `firefox`); the application picker lists
-`.desktop` entries with their icons. Wayland doesn't report the focused window,
-so the Global mode applies there. Completed dictations are kept in History.
+`.desktop` entries with their icons. On GNOME Wayland, HEX gets the same name
+from the FocusBridge Shell extension (see [GNOME](#gnome)). Other Wayland
+desktops do not report the focused window, so the Global mode applies there.
+Completed dictations are kept in History.
 
 Voice Action, once enabled, records an instruction while you hold
 **Ctrl-Alt-I**, pairs it with the primary selection (the text you selected), asks
@@ -169,10 +171,16 @@ has already been saved; listening resumes only if it was previously running.
 
 ## Shortcuts
 
-Hex gets its shortcuts one of three ways, and all of them drive the same
+Hex gets its shortcuts one of four ways, and all of them drive the same
 dictation rules:
 
 - **X11:** Hex grabs the shortcuts Settings records.
+- **Wayland, when Hex can read `/dev/input`** (the `input` group): Hex reads the
+  shortcuts Settings records from the keyboards themselves. A shortcut starts
+  when its key goes down while exactly its modifiers are held, and ends when
+  that key comes up. Hex sees every key but blocks none, so the shortcut and
+  Escape also reach the focused application. Key names follow a US layout.
+  Hex prefers this over the portal, because GNOME's portal cannot serve Hex.
 - **Wayland with the GlobalShortcuts portal** (for example niri with
   `xdg-desktop-portal-gnome`, GNOME, or KDE): Hex asks the desktop for the
   shortcuts Settings records. The desktop decides: it may grant them, assign
@@ -214,7 +222,8 @@ stopping while idle, and cancelling while idle do nothing, so key repeat is
 harmless. Start and stop bypass Hold, Toggle, and double-tap: start records,
 stop finishes. A shortcut press also finishes a recording a command started.
 
-Escape cancels only while something records. On Wayland with the portal, Hex
+Escape cancels only while something records. When Hex reads the keyboards, it
+watches Escape without blocking it. On Wayland with the portal, Hex
 binds Escape, and Escape with the recording shortcut's modifiers, only for the
 length of the recording; the desktop then keeps that Escape from the focused
 application. Without the portal, bind `hex dictation cancel` instead.
@@ -247,8 +256,19 @@ even with Settings closed: a layer-shell surface on Wayland, an override-redirec
 popup on X11. **Recording indicator** places it at the top or bottom of the
 screen, or turns it off.
 
-Insertion uses the clipboard and **Ctrl-V** for new installations. Enable
-**Terminal paste shortcut** in Settings for targets that require **Ctrl-Shift-V**.
+Insertion puts the transcript on the clipboard, then picks a route by the
+focused application's process name:
+
+- **Emacs:** `emacsclient` inserts the text at point in the selected window,
+  because Emacs binds **Ctrl-V** to scrolling. Emacs must run its server
+  (`(server-start)`). The text goes through an owner-only file in
+  `$XDG_RUNTIME_DIR`, which HEX deletes afterwards. A read-only buffer or a
+  missing server fails the paste. The text stays on the clipboard.
+- **Terminals** such as WezTerm, kitty, Alacritty, foot, and GNOME Terminal:
+  **Ctrl-Shift-V**.
+- **Everything else:** **Ctrl-V**. Enable **Terminal paste shortcut** in Settings
+  to send **Ctrl-Shift-V** everywhere, for terminals HEX does not recognize.
+
 Existing X11 settings retain their previous Ctrl-Shift-V behavior until changed.
 The target application must accept the selected binding. The beta leaves the
 transcript on the clipboard; arbitrary previous
@@ -261,19 +281,44 @@ application (see [#24](https://github.com/anomalyco/hex/issues/24)).
 - Export the compositor's nonempty `WAYLAND_DISPLAY` in the launch environment.
   HEX, GTK, and GPUI select the same native backend even when XWayland's
   `DISPLAY` is also present. `XDG_SESSION_TYPE` alone does not select Wayland.
-- Install `wl-clipboard` and `wtype`. The compositor must support their clipboard
-  and virtual-keyboard protocols. There is no silent XWayland, direct-typing, or
-  privileged input-injection fallback. Transcript text travels on stdin, not
-  command-line arguments.
+- Install `wl-clipboard`. When HEX can write to `/dev/uinput`, it sends the paste
+  keys through its own uinput keyboard, which every compositor reads. Otherwise
+  it uses `wtype`, which needs the compositor's virtual-keyboard protocol.
+  There is no XWayland or direct-typing fallback. Transcript text travels on
+  stdin, not command-line arguments.
 - The overlay requires layer-shell. Settings reports when the HUD is unavailable
   rather than presenting a normal focus-taking window as an overlay.
-- Shortcuts come from the GlobalShortcuts portal or from your own keybindings
-  for the `hex` commands ([Shortcuts](#shortcuts)). HEX reads no input devices
-  and needs no `input` group membership or other device permission. If the
-  desktop closes the portal session, the listener stops with an error and an
-  active recording is cancelled; enable it again from Settings or `hex start`.
-- Paste does not wait for held keys: `wtype`'s virtual keyboard sends its own
-  modifiers, so Ctrl+V stays Ctrl+V while you still hold a shortcut.
+- Shortcuts come from the keyboards, the GlobalShortcuts portal, or your own
+  keybindings for the `hex` commands ([Shortcuts](#shortcuts)). Without read
+  access to `/dev/input`, HEX needs no device permission. If the desktop closes
+  the portal session, the listener stops with an error and an active recording
+  is cancelled; enable it again from Settings or `hex start`.
+- The compositor merges the uinput keyboard's keys with yours, so a modifier
+  you still hold would join its Ctrl+V. HEX waits until no keyboard holds Ctrl,
+  Shift, Alt, or Super. Without read access to `/dev/input`, it cannot see them
+  and does not wait. `wtype`'s virtual keyboard sends its own modifiers, so it
+  never waits.
+
+## GNOME
+
+GNOME offers no virtual-keyboard, layer-shell, or clipboard-control protocol,
+and its GlobalShortcuts portal refuses an app id without a dot such as `hex`.
+HEX works there with these pieces:
+
+1. Add your user to the `input` group, so HEX reads the shortcuts from your
+   keyboards. On NixOS, add `input` to `users.users.<name>.extraGroups`.
+2. Give your user write access to `/dev/uinput`, so HEX can send paste keys. On
+   NixOS, set `hardware.uinput.enable = true` and add the `uinput` group.
+3. Enable the FocusBridge Shell extension from freestyle
+   (`integrations/gnome-focus-bridge`). HEX asks it for the focused window over
+   D-Bus (`com.freestyle.FocusBridge`), for modes and for the Emacs and terminal
+   paste routes. Without it, HEX cannot tell which application has focus, and
+   the **Terminal paste shortcut** setting picks the paste keys.
+4. Optional: bind your dictation shortcut to a command that does nothing in
+   GNOME's keyboard settings, so the focused application no longer receives it.
+
+Log out and back in after changing groups. The `wl-copy` clipboard works on
+GNOME without moving focus.
 
 ## Updates And Validation
 

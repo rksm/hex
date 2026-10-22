@@ -153,13 +153,18 @@ substitute for source inspection or a second roadmap.
   migration.
 - `linux_input`: the one shortcut state machine (hold, double-tap lock, toggle,
   double-tap only, Escape, Paste Last, Voice Action, and `hex` commands) and the
-  monitor that feeds it from X11 key grabs, the Wayland GlobalShortcuts portal,
-  or, without the portal, the `hex` commands alone.
+  monitor that feeds it from X11 key grabs, readable Wayland keyboards, the
+  Wayland GlobalShortcuts portal, or, without either, the `hex` commands alone.
+- `linux_evdev`: keyboards read from /dev/input with the `input` group: key
+  presses and releases stamped with the modifiers held at that moment, US-layout
+  key codes, and the held-modifier check paste waits on.
 - `linux_portal`: the GlobalShortcuts portal client on a private bus
   connection: `Register("hex")`, one session for Hex's shortcuts, a second
   session binding Escape only while recording, granted-trigger descriptions,
   and session-closed reporting.
-- `linux_context`: the frontmost X11 application for modes; Wayland has none.
+- `linux_context`: the frontmost application's process name for modes and
+  paste routes: X11's active window, or on GNOME Wayland freestyle's FocusBridge
+  Shell extension; other Wayland desktops have none.
 - `linux_audio_control`: While-dictating mute through `wpctl`/`pactl` and
   MPRIS pause over D-Bus, restoring only what it changed.
 - `linux_session`: display-backend selection matching GPUI's nonempty
@@ -503,16 +508,21 @@ CoreAudio formats, AppleScript details, or event serialization.
   x86_64 manifest, verify exact size and SHA-256 from a content-addressed
   artifact, and atomically switch the user-local `current` version. Never
   overwrite development, root, or package-manager-owned binaries.
-- The Wayland beta requires compatible clipboard, virtual-keyboard, and
-  layer-shell protocols. Shortcuts come from the GlobalShortcuts portal when the
-  desktop offers it; otherwise the user binds the `hex dictation`,
-  `hex voice-action`, and `hex paste-last` commands in the desktop's own
-  keybindings. One general path: no compositor-specific code, no raw input
-  devices, no input-group requirement, and no silent fallback to XWayland or
-  privileged input injection. The desktop may grant a different trigger or
-  refuse one; Settings shows what it granted. Escape is bound only while
-  something records. Modifier-only shortcuts stay unsupported on Linux.
-- Every Linux shortcut source (X11 grabs, portal presses, `hex` commands) feeds
+- The Wayland beta needs a clipboard protocol `wl-copy` can use and, for the
+  HUD, layer-shell. Shortcuts come from the keyboards when the service can read
+  /dev/input (the `input` group), because GNOME's portal refuses the `hex` app
+  id and reports a release only while every modifier is still down. Otherwise
+  they come from the GlobalShortcuts portal when the desktop offers it, or
+  else the user binds the `hex dictation`, `hex voice-action`, and
+  `hex paste-last` commands in the desktop's own keybindings. Keyboard reading
+  blocks no key, so shortcuts and Escape also reach the focused application.
+  Paste keys go through a uinput keyboard when /dev/uinput is writable, else
+  `wtype`. No compositor-specific code and no XWayland fallback. The portal
+  may grant a different trigger or refuse one; Settings shows what it granted,
+  and Escape is bound only while something records. Modifier-only shortcuts
+  stay unsupported on Linux.
+- Every Linux shortcut source (X11 grabs, Wayland keyboards, portal presses,
+  `hex` commands) feeds
   the same `linux_input` state machine and emits the same events. Commands are
   idempotent: starting while recording or stopping while idle does nothing.
   They talk only to a running, listening service and fail with a clear error
@@ -529,12 +539,17 @@ CoreAudio formats, AppleScript details, or event serialization.
   committed. Settings and the CLI must expose service state, recovery, and errors.
   Explicit service shutdown drains workers; closing Settings only disconnects its
   client. HUD teardown only hides that listener's HUD.
-- Linux paste keeps transcripts off helper argv and bounds helper I/O. X11 waits
-  for physical modifiers without discarding accepted output, and shutdown
-  cancels that wait; on Wayland, `wtype`'s virtual keyboard carries its own
-  modifiers, so held keys never change its Ctrl+V. New installs use Ctrl-V;
-  the terminal-paste preference selects Ctrl-Shift-V and defaults on for
-  persisted legacy X11 settings. The beta retains
+- Linux paste keeps transcripts off helper argv and bounds helper I/O. It
+  routes by the focused process name: Emacs gets `emacsclient` insertion from
+  an owner-only runtime file (Emacs binds C-v to scrolling), recognized
+  terminals get Ctrl-Shift-V, and everything else Ctrl-V, or Ctrl-Shift-V when
+  the terminal-paste preference is on (default on for persisted legacy X11
+  settings). X11 and the uinput keyboard wait for physical modifiers without
+  discarding accepted output, and shutdown cancels that wait: the compositor
+  merges uinput keys with held ones. `wtype`'s virtual keyboard carries its own
+  modifiers, so held keys never change its Ctrl+V. The shortcut listener queries
+  `EVIOCGKEY` on its own files only right after opening them or after a drop,
+  because the kernel then discards their queued key events. The beta retains
   the transcript clipboard; arbitrary MIME restoration and consumption
   acknowledgments remain unimplemented.
 

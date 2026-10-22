@@ -74,6 +74,8 @@ mod linux_desktop;
 #[cfg(target_os = "linux")]
 mod linux_dictation;
 #[cfg(target_os = "linux")]
+mod linux_evdev;
+#[cfg(target_os = "linux")]
 mod linux_input;
 #[cfg(target_os = "linux")]
 mod linux_migration;

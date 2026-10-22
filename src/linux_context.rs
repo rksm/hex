@@ -1,11 +1,17 @@
-//! The frontmost application on Linux, for dictation modes. X11 reports the
-//! active window's process. Wayland compositors don't expose the focused
-//! window, so modes fall back to the global settings there.
+//! The frontmost application on Linux, for dictation modes and paste. X11
+//! reports the active window's process. On GNOME Wayland the FocusBridge
+//! Shell extension reports it; other Wayland compositors don't expose the
+//! focused window, so modes fall back to the global settings there.
 
+use gtk::gio;
+use gtk::glib::VariantTy;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 
 use crate::context::ContextSnapshot;
+
+const FOCUS_BRIDGE: &str = "com.freestyle.FocusBridge";
+const FOCUS_BRIDGE_TIMEOUT_MS: i32 = 250;
 
 pub fn capture() -> ContextSnapshot {
     ContextSnapshot {
@@ -14,10 +20,17 @@ pub fn capture() -> ContextSnapshot {
     }
 }
 
-fn frontmost_application() -> Option<String> {
-    if crate::linux_session::LinuxSession::detect().is_wayland() {
-        return None;
-    }
+/// The focused window's process name, such as "firefox" or "wezterm-gui".
+pub fn frontmost_application() -> Option<String> {
+    let pid = if crate::linux_session::LinuxSession::detect().is_wayland() {
+        focus_bridge_pid()?
+    } else {
+        x11_active_pid()?
+    };
+    process_name(pid)
+}
+
+fn x11_active_pid() -> Option<u32> {
     let (connection, screen) = x11rb::connect(None).ok()?;
     let root = connection.setup().roots.get(screen)?.root;
     let active = intern(&connection, b"_NET_ACTIVE_WINDOW")?;
@@ -26,7 +39,31 @@ fn frontmost_application() -> Option<String> {
     if window == 0 {
         return None;
     }
-    process_name(property(&connection, window, pid, AtomEnum::CARDINAL)?)
+    property(&connection, window, pid, AtomEnum::CARDINAL)
+}
+
+/// The focused window's process, from the FocusBridge GNOME Shell extension
+/// (freestyle's `integrations/gnome-focus-bridge`). GNOME hides the focused
+/// window from other clients, so only an extension can report it. `None`
+/// when the extension is missing, as on every other Wayland compositor.
+fn focus_bridge_pid() -> Option<u32> {
+    let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()?;
+    let reply = connection
+        .call_sync(
+            Some(FOCUS_BRIDGE),
+            "/com/freestyle/FocusBridge",
+            FOCUS_BRIDGE,
+            "GetActiveWindow",
+            None,
+            Some(VariantTy::new("(s)").ok()?),
+            gio::DBusCallFlags::NONE,
+            FOCUS_BRIDGE_TIMEOUT_MS,
+            gio::Cancellable::NONE,
+        )
+        .ok()?;
+    let (payload,) = reply.get::<(String,)>()?;
+    let window: serde_json::Value = serde_json::from_str(&payload).ok()?;
+    window.get("pid")?.as_u64()?.try_into().ok()
 }
 
 fn intern(connection: &impl Connection, name: &[u8]) -> Option<u32> {

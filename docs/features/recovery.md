@@ -322,6 +322,11 @@ desktop closes the main shortcuts session -> cancel active capture
 no portal -> bind `hex dictation cancel` in the desktop
 ```
 
+When Hex reads the keyboards from /dev/input, it binds nothing: an Escape press
+cancels while something records, and the focused application also receives it.
+A keyboard that disappears or drops events while a shortcut is held cancels the
+capture rather than inventing a release.
+
 Checks in [linux_input.rs](../../src/linux_input.rs):
 `escape_is_wanted_only_while_something_records`,
 `escape_grab_conflict_is_not_fatal`, `non_conflict_grab_errors_stay_fatal`,
